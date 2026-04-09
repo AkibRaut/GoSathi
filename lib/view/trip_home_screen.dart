@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:go_sathi/models/route_data.dart';
 import '../utils/app_colors.dart';
 import 'map_screen.dart';
+import 'routes_screen.dart';
 import 'safety_screen.dart';
 import 'expense_screen.dart';
 import 'setting_screen.dart';
@@ -42,7 +44,7 @@ class _TripHomeScreenState extends State<TripHomeScreen> {
   void initState() {
     super.initState();
     _screens = [
-      TripMapScreen(
+      RouteTabScreen(
         startLatLng: widget.startLatLng,
         destinationLatLng: widget.destinationLatLng,
         startAddress: widget.startAddress,
@@ -126,6 +128,82 @@ class _TripHomeScreenState extends State<TripHomeScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class RouteTabScreen extends StatefulWidget {
+  final LatLng startLatLng;
+  final LatLng destinationLatLng;
+  final String startAddress;
+  final String destinationAddress;
+
+  const RouteTabScreen({
+    super.key,
+    required this.startLatLng,
+    required this.destinationLatLng,
+    required this.startAddress,
+    required this.destinationAddress,
+  });
+
+  @override
+  State<RouteTabScreen> createState() => _RouteTabScreenState();
+}
+
+class _RouteTabScreenState extends State<RouteTabScreen> {
+  bool _showRoutesView = false;
+  TripRouteData _routeData = const TripRouteData.empty();
+  RouteAmenity? _pendingAmenityNavigation;
+
+  void _toggleRoutesView() {
+    setState(() {
+      _showRoutesView = !_showRoutesView;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Offstage(
+          offstage: _showRoutesView,
+          child: TripMapScreen(
+            startLatLng: widget.startLatLng,
+            destinationLatLng: widget.destinationLatLng,
+            startAddress: widget.startAddress,
+            destinationAddress: widget.destinationAddress,
+            onViewRoutes: _toggleRoutesView,
+            navigateAmenityRequest: _pendingAmenityNavigation,
+            onNavigateAmenityHandled: (amenityId) {
+              if (!mounted) return;
+              if (_pendingAmenityNavigation?.id != amenityId) return;
+              setState(() {
+                _pendingAmenityNavigation = null;
+              });
+            },
+            onRouteDataChanged: (routeData) {
+              if (!mounted) return;
+              setState(() {
+                _routeData = routeData;
+              });
+            },
+          ),
+        ),
+        Offstage(
+          offstage: !_showRoutesView,
+          child: RoutesScreen(
+            embedded: true,
+            onBackToMap: _toggleRoutesView,
+            routeData: _routeData,
+            onNavigateToAmenity: (amenity) {
+              setState(() {
+                _pendingAmenityNavigation = amenity;
+                _showRoutesView = false;
+              });
+            },
+          ),
+        ),
+      ],
     );
   }
 }

@@ -11,48 +11,30 @@ class ExpensesScreen extends StatefulWidget {
 }
 
 class _ExpensesScreenState extends State<ExpensesScreen> {
-  int _selectedNavIndex = 2; // Expenses tab is selected
-  bool _showEmptyState = true;
-
-  List<Map<String, dynamic>> _expenses = [];
-
-  final List<String> _navItems = ['Routes', 'Safety', 'Expenses', 'Settings'];
-  final List<IconData> _navIcons = [
-    Icons.route,
-    Icons.security,
-    Icons.receipt,
-    Icons.settings,
+  final List<_ExpenseCategory> _categories = const [
+    _ExpenseCategory('Fuel', Icons.local_gas_station, Colors.orange),
+    _ExpenseCategory('Toll', Icons.toll, Colors.deepOrange),
+    _ExpenseCategory('Food', Icons.restaurant, Colors.green),
+    _ExpenseCategory('Other', Icons.more_horiz, Colors.blue),
   ];
 
-  // Expense categories
-  final List<Map<String, dynamic>> _categories = [
-    {
-      'name': 'Fuel',
-      'icon': Icons.local_gas_station,
-      'color': Colors.orange,
-      'total': 0.0,
-    },
-    {'name': 'Toll', 'icon': Icons.toll, 'color': Colors.orange, 'total': 0.0},
-    {
-      'name': 'Food',
-      'icon': Icons.restaurant,
-      'color': Colors.green,
-      'total': 0.0,
-    },
-    {
-      'name': 'Other',
-      'icon': Icons.more_horiz,
-      'color': Colors.blue,
-      'total': 0.0,
-    },
-  ];
+  final List<_ExpenseEntry> _expenses = [];
 
-  double get _totalSpent {
-    return _categories.fold(0.0, (sum, cat) => sum + (cat['total'] as double));
+  double get _totalSpent =>
+      _expenses.fold(0.0, (sum, expense) => sum + expense.amount);
+
+  double _categoryTotal(String category) {
+    return _expenses
+        .where((expense) => expense.category == category)
+        .fold(0.0, (sum, expense) => sum + expense.amount);
   }
 
-  void _addExpense() {
-    Get.dialog(
+  Future<void> _addExpense() async {
+    final amountController = TextEditingController();
+    final descriptionController = TextEditingController();
+    String selectedCategory = _categories.first.name;
+
+    final result = await Get.dialog<_ExpenseEntry>(
       AlertDialog(
         backgroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -60,18 +42,90 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
           'Add Expense',
           style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
         ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [_buildExpenseForm()],
-          ),
+        content: StatefulBuilder(
+          builder: (context, setDialogState) {
+            return SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: amountController,
+                    decoration: InputDecoration(
+                      labelText: 'Amount',
+                      hintText: 'Enter amount',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      prefixText: 'Rs ',
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedCategory,
+                    decoration: InputDecoration(
+                      labelText: 'Category',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    items: _categories
+                        .map(
+                          (category) => DropdownMenuItem<String>(
+                            value: category.name,
+                            child: Text(category.name),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setDialogState(() {
+                        selectedCategory = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: descriptionController,
+                    decoration: InputDecoration(
+                      labelText: 'Description',
+                      hintText: 'Optional',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         ),
         actions: [
           TextButton(onPressed: () => Get.back(), child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () {
-              Get.back();
-              _simulateAddExpense();
+              final amount = double.tryParse(amountController.text.trim());
+              if (amount == null || amount <= 0) {
+                Get.snackbar(
+                  'Invalid amount',
+                  'Enter a valid expense amount',
+                  snackPosition: SnackPosition.BOTTOM,
+                  backgroundColor: Colors.red,
+                  colorText: Colors.white,
+                );
+                return;
+              }
+
+              Get.back(
+                result: _ExpenseEntry(
+                  amount: amount,
+                  category: selectedCategory,
+                  description: descriptionController.text.trim(),
+                  createdAt: DateTime.now(),
+                ),
+              );
             },
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
             child: Text(
@@ -82,56 +136,13 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
         ],
       ),
     );
-  }
 
-  Widget _buildExpenseForm() {
-    return Column(
-      children: [
-        TextField(
-          decoration: InputDecoration(
-            labelText: 'Amount',
-            hintText: 'Enter amount',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            prefixText: '₹ ',
-          ),
-          keyboardType: TextInputType.number,
-        ),
-        const SizedBox(height: 12),
-        DropdownButtonFormField(
-          decoration: InputDecoration(
-            labelText: 'Category',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-          ),
-          items: _categories
-              .map(
-                (cat) => DropdownMenuItem(
-                  value: cat['name'],
-                  child: Text(cat['name']),
-                ),
-              )
-              .toList(),
-          onChanged: (value) {},
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          decoration: InputDecoration(
-            labelText: 'Description',
-            hintText: 'Optional',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-          ),
-        ),
-      ],
-    );
-  }
+    if (result == null) {
+      return;
+    }
 
-  void _simulateAddExpense() {
     setState(() {
-      _showEmptyState = false;
-      // Add sample expense
-      _categories[0]['total'] = 500.0; // Fuel
-      _categories[1]['total'] = 150.0; // Toll
-      _categories[2]['total'] = 300.0; // Food
-      _categories[3]['total'] = 50.0; // Other
+      _expenses.insert(0, result);
     });
 
     Get.snackbar(
@@ -149,27 +160,19 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
       backgroundColor: Colors.grey[50],
       body: Column(
         children: [
-          // Header
           _buildHeader(),
-
-          // Main Content
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Total Spent Card
                   _buildTotalSpentCard(),
-
                   const SizedBox(height: 24),
-
-                  // Empty State or Expenses List
-                  if (_showEmptyState)
+                  if (_expenses.isEmpty)
                     _buildEmptyState()
                   else
                     _buildExpensesList(),
-
                   const SizedBox(height: 20),
                 ],
               ),
@@ -225,7 +228,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha: 0.1),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -244,7 +247,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            '₹${_totalSpent.toStringAsFixed(0)}',
+            'Rs ${_totalSpent.toStringAsFixed(0)}',
             style: GoogleFonts.poppins(
               fontSize: 36,
               fontWeight: FontWeight.bold,
@@ -252,7 +255,6 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
             ),
           ),
           const SizedBox(height: 20),
-          // Category Breakdown
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: _categories
@@ -264,7 +266,9 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
     );
   }
 
-  Widget _buildCategoryBreakdown(Map<String, dynamic> category) {
+  Widget _buildCategoryBreakdown(_ExpenseCategory category) {
+    final total = _categoryTotal(category.name);
+
     return Column(
       children: [
         Container(
@@ -274,15 +278,11 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
             color: Colors.white10,
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(
-            category['icon'] as IconData,
-            color: category['color'] as Color,
-            size: 24,
-          ),
+          child: Icon(category.icon, color: category.color, size: 24),
         ),
         const SizedBox(height: 8),
         Text(
-          '₹${(category['total'] as double).toStringAsFixed(0)}',
+          'Rs ${total.toStringAsFixed(0)}',
           style: GoogleFonts.poppins(
             fontSize: 13,
             fontWeight: FontWeight.w600,
@@ -291,7 +291,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
         ),
         const SizedBox(height: 4),
         Text(
-          category['name'] as String,
+          category.name,
           style: GoogleFonts.inter(fontSize: 11, color: Colors.white70),
         ),
       ],
@@ -357,7 +357,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Expenses Breakdown',
+          'Expense Entries',
           style: GoogleFonts.poppins(
             fontSize: 16,
             fontWeight: FontWeight.w600,
@@ -365,20 +365,25 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        ..._categories
-            .where((cat) => (cat['total'] as double) > 0)
-            .map(
-              (category) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _buildExpenseItem(category),
-              ),
-            )
-            .toList(),
+        ..._expenses.map(
+          (expense) => Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _buildExpenseItem(expense),
+          ),
+        ),
       ],
     );
   }
 
-  Widget _buildExpenseItem(Map<String, dynamic> category) {
+  Widget _buildExpenseItem(_ExpenseEntry expense) {
+    final category = _categories.firstWhere(
+      (item) => item.name == expense.category,
+      orElse: () => _categories.last,
+    );
+    final percentage = _totalSpent == 0
+        ? 0.0
+        : (expense.amount / _totalSpent) * 100;
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -386,26 +391,23 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: (category['color'] as Color).withOpacity(0.1),
+              color: category.color.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Icon(
-              category['icon'] as IconData,
-              color: category['color'] as Color,
-              size: 20,
-            ),
+            child: Icon(category.icon, color: category.color, size: 20),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -413,7 +415,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  category['name'] as String,
+                  expense.category,
                   style: GoogleFonts.poppins(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
@@ -422,7 +424,17 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '${((category['total'] as double) / _totalSpent * 100).toStringAsFixed(1)}% of total',
+                  expense.description.isEmpty
+                      ? 'Added by user'
+                      : expense.description,
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${percentage.toStringAsFixed(1)}% of total • ${_formatDate(expense.createdAt)}',
                   style: GoogleFonts.inter(
                     fontSize: 11,
                     color: AppColors.textSecondary,
@@ -432,7 +444,7 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
             ),
           ),
           Text(
-            '₹${(category['total'] as double).toStringAsFixed(0)}',
+            'Rs ${expense.amount.toStringAsFixed(0)}',
             style: GoogleFonts.poppins(
               fontSize: 14,
               fontWeight: FontWeight.w600,
@@ -443,4 +455,37 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
       ),
     );
   }
+
+  String _formatDate(DateTime dateTime) {
+    final hour = dateTime.hour > 12
+        ? dateTime.hour - 12
+        : dateTime.hour == 0
+        ? 12
+        : dateTime.hour;
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    final period = dateTime.hour >= 12 ? 'PM' : 'AM';
+    return '${dateTime.day}/${dateTime.month}/${dateTime.year} $hour:$minute $period';
+  }
+}
+
+class _ExpenseCategory {
+  final String name;
+  final IconData icon;
+  final Color color;
+
+  const _ExpenseCategory(this.name, this.icon, this.color);
+}
+
+class _ExpenseEntry {
+  final double amount;
+  final String category;
+  final String description;
+  final DateTime createdAt;
+
+  const _ExpenseEntry({
+    required this.amount,
+    required this.category,
+    required this.description,
+    required this.createdAt,
+  });
 }

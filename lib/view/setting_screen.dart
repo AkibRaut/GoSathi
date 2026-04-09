@@ -11,8 +11,6 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  int _selectedNavIndex = 3; // Settings tab is selected
-
   // Snooze categories state
   Map<String, bool> _snoozeCategories = {
     'Petrol Pumps': true,
@@ -22,14 +20,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     'Restrooms': false,
     'Toll Plazas': false,
   };
-
-  final List<String> _navItems = ['Routes', 'Safety', 'Expenses', 'Settings'];
-  final List<IconData> _navIcons = [
-    Icons.route,
-    Icons.security,
-    Icons.receipt,
-    Icons.settings,
-  ];
 
   final List<Map<String, dynamic>> _categoryIcons = [
     {
@@ -103,11 +93,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       child: Row(
         children: [
-          IconButton(
-            onPressed: () => Get.back(),
-            icon: const Icon(Icons.arrow_back),
-            color: AppColors.textPrimary,
-          ),
           Text(
             'Settings',
             style: GoogleFonts.poppins(

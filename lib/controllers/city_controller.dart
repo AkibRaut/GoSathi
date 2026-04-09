@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:go_sathi/services/city_service.dart';
 import 'package:go_sathi/view/trip_home_screen.dart';
+import 'package:location/location.dart';
 
 class CityController extends GetxController {
   final CityService _cityService;
@@ -98,15 +99,30 @@ class CityController extends GetxController {
     destinationLatLng.value = null;
   }
 
-  void startTrip() {
+  final Location _location = Location();
+  LatLng? _currentLocation;
+  Future<void> _getCurrentLocation() async {
+    try {
+      final locationData = await _location.getLocation();
+      _currentLocation = LatLng(
+        locationData.latitude!,
+        locationData.longitude!,
+      );
+    } catch (e) {
+      debugPrint('Error getting current location: $e');
+    }
+  }
+
+  void startTrip() async {
     if (formKey.currentState!.validate()) {
       // if (startLatLng.value == null || destinationLatLng.value == null) {
       //   Get.snackbar('Error', 'Please select valid places from suggestions');
       //   return;
       // }
+      await _getCurrentLocation();
       Get.to(
         () => TripHomeScreen(
-          startLatLng: LatLng(18.52028, 73.85667),
+          startLatLng: _currentLocation ?? LatLng(18.52028, 73.85667),
           destinationLatLng: LatLng(19.07611, 72.87750),
           startAddress: "Pune, Maharashtra, India",
           destinationAddress: "Mumbai, Maharashtra, India",

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../utils/app_colors.dart';
 
 class SafetyScreen extends StatefulWidget {
@@ -11,18 +12,10 @@ class SafetyScreen extends StatefulWidget {
 }
 
 class _SafetyScreenState extends State<SafetyScreen> {
+  static const String _sosWhatsAppNumber = '917743876435';
   bool _accidentDetectionEnabled = false;
-  int _selectedNavIndex = 1; // Safety tab is selected
-  List<Map<String, String>> _emergencyContacts = [
-    {'name': '', 'relation': '', 'phone': '+91 98765 43210'},
-  ];
-
-  final List<String> _navItems = ['Routes', 'Safety', 'Expenses', 'Settings'];
-  final List<IconData> _navIcons = [
-    Icons.route,
-    Icons.security,
-    Icons.receipt,
-    Icons.settings,
+  final List<Map<String, String>> _emergencyContacts = [
+    {'name': '', 'relation': '', 'phone': ''},
   ];
 
   void _addContact() {
@@ -39,6 +32,44 @@ class _SafetyScreenState extends State<SafetyScreen> {
     }
   }
 
+  void _updateContactField(int index, String key, String value) {
+    setState(() {
+      _emergencyContacts[index][key] = value;
+    });
+  }
+
+  Future<void> _sendSOSOnWhatsApp() async {
+    final savedContacts = _emergencyContacts
+        .where(
+          (contact) =>
+              (contact['name'] ?? '').trim().isNotEmpty ||
+              (contact['phone'] ?? '').trim().isNotEmpty,
+        )
+        .length;
+
+    final message = Uri.encodeComponent(
+      'SOS alert from GoSaathi.\n'
+      'Please check on me immediately.\n'
+      'Emergency contacts saved in app: $savedContacts',
+    );
+    final whatsappUri = Uri.parse(
+      'https://wa.me/$_sosWhatsAppNumber?text=$message',
+    );
+
+    if (await canLaunchUrl(whatsappUri)) {
+      await launchUrl(whatsappUri, mode: LaunchMode.externalApplication);
+      return;
+    }
+
+    Get.snackbar(
+      'WhatsApp unavailable',
+      'Could not open WhatsApp for 7743876435',
+      snackPosition: SnackPosition.BOTTOM,
+      backgroundColor: Colors.red,
+      colorText: Colors.white,
+    );
+  }
+
   void _triggerSOS() {
     Get.dialog(
       AlertDialog(
@@ -51,16 +82,9 @@ class _SafetyScreenState extends State<SafetyScreen> {
         actions: [
           TextButton(onPressed: () => Get.back(), child: const Text('Cancel')),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               Get.back();
-              Get.snackbar(
-                'SOS Sent',
-                'Emergency alert sent to all contacts with your location',
-                snackPosition: SnackPosition.BOTTOM,
-                backgroundColor: Colors.red,
-                colorText: Colors.white,
-                duration: const Duration(seconds: 3),
-              );
+              await _sendSOSOnWhatsApp();
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
@@ -128,11 +152,6 @@ class _SafetyScreenState extends State<SafetyScreen> {
       ),
       child: Row(
         children: [
-          IconButton(
-            onPressed: () => Get.back(),
-            icon: const Icon(Icons.arrow_back),
-            color: AppColors.textPrimary,
-          ),
           Text(
             'Safety',
             style: GoogleFonts.poppins(
@@ -156,7 +175,7 @@ class _SafetyScreenState extends State<SafetyScreen> {
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.1),
+              color: Colors.black.withValues(alpha: 0.1),
               blurRadius: 12,
               offset: const Offset(0, 4),
             ),
@@ -175,7 +194,7 @@ class _SafetyScreenState extends State<SafetyScreen> {
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.red.withOpacity(0.5),
+                      color: Colors.red.withValues(alpha: 0.5),
                       blurRadius: 16,
                       spreadRadius: 2,
                     ),
@@ -253,7 +272,7 @@ class _SafetyScreenState extends State<SafetyScreen> {
                   duration: const Duration(seconds: 2),
                 );
               },
-              activeColor: AppColors.primary,
+              activeThumbColor: AppColors.primary,
             ),
           ],
         ),
@@ -322,7 +341,7 @@ class _SafetyScreenState extends State<SafetyScreen> {
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -337,7 +356,10 @@ class _SafetyScreenState extends State<SafetyScreen> {
                 Row(
                   children: [
                     Expanded(
-                      child: TextField(
+                      child: TextFormField(
+                        initialValue: _emergencyContacts[index]['name'],
+                        onChanged: (value) =>
+                            _updateContactField(index, 'name', value),
                         decoration: InputDecoration(
                           hintText: 'Name',
                           border: InputBorder.none,
@@ -352,7 +374,10 @@ class _SafetyScreenState extends State<SafetyScreen> {
                     ),
                     SizedBox(width: 12),
                     Expanded(
-                      child: TextField(
+                      child: TextFormField(
+                        initialValue: _emergencyContacts[index]['relation'],
+                        onChanged: (value) =>
+                            _updateContactField(index, 'relation', value),
                         decoration: InputDecoration(
                           hintText: 'Relation',
                           border: InputBorder.none,
@@ -368,7 +393,10 @@ class _SafetyScreenState extends State<SafetyScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                TextField(
+                TextFormField(
+                  initialValue: _emergencyContacts[index]['phone'],
+                  onChanged: (value) =>
+                      _updateContactField(index, 'phone', value),
                   decoration: InputDecoration(
                     hintText: 'Phone Number',
                     border: InputBorder.none,
@@ -380,9 +408,6 @@ class _SafetyScreenState extends State<SafetyScreen> {
                   ),
                   keyboardType: TextInputType.phone,
                   style: GoogleFonts.inter(fontSize: 12),
-                  controller: TextEditingController(
-                    text: _emergencyContacts[index]['phone'],
-                  ),
                 ),
               ],
             ),
