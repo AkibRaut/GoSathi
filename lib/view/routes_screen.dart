@@ -27,7 +27,14 @@ class _RoutesScreenState extends State<RoutesScreen> {
   String _selectedCategory = 'All';
   final Set<String> _visitedAmenityIds = {};
 
-  final List<String> _categories = ['All', 'Petrol', 'EV', 'Food', 'Hotels'];
+  final List<String> _categories = [
+    'All',
+    'Petrol',
+    'EV',
+    'Food',
+    'Hotels',
+    'CNG',
+  ];
   final List<String> _navItems = ['Routes', 'Safety', 'Expenses', 'Settings'];
   final List<IconData> _navIcons = [
     Icons.route,
@@ -58,6 +65,8 @@ class _RoutesScreenState extends State<RoutesScreen> {
         return Colors.deepOrange;
       case 'Hotels':
         return Colors.indigo;
+      case 'CNG':
+        return Colors.teal;
       default:
         return Colors.grey;
     }
@@ -73,6 +82,8 @@ class _RoutesScreenState extends State<RoutesScreen> {
         return Icons.restaurant;
       case 'Hotels':
         return Icons.hotel;
+      case 'CNG':
+        return Icons.local_gas_station;
       default:
         return Icons.grid_view_rounded;
     }

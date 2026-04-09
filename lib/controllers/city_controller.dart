@@ -26,6 +26,7 @@ class CityController extends GetxController {
   final startAddress = ''.obs;
   final destinationAddress = ''.obs;
   final isFetchingCurrentStart = false.obs;
+  final isStartingTrip = false.obs;
 
   // Search places (returns list of predictions)
   Future<List<Map<String, String>>> searchPlaces(String input) async {
@@ -201,14 +202,20 @@ class CityController extends GetxController {
   }
 
   void startTrip() async {
-    if (formKey.currentState!.validate()) {
-      if (startLatLng.value == null || destinationLatLng.value == null) {
-        Get.snackbar(
-          'Route incomplete',
-          'Please select both start and destination from suggestions',
-        );
-        return;
-      }
+    if (!formKey.currentState!.validate()) {
+      return;
+    }
+
+    if (startLatLng.value == null || destinationLatLng.value == null) {
+      Get.snackbar(
+        'Route incomplete',
+        'Please select both start and destination from suggestions',
+      );
+      return;
+    }
+
+    try {
+      isStartingTrip.value = true;
       await _getCurrentLocation();
       Get.to(
         () => TripHomeScreen(
@@ -222,6 +229,8 @@ class CityController extends GetxController {
           destinationAddress: destinationAddress.value,
         ),
       );
+    } finally {
+      isStartingTrip.value = false;
     }
   }
 

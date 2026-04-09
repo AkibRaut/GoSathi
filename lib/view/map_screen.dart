@@ -335,8 +335,29 @@ class _TripMapScreenState extends State<TripMapScreen> {
           category: 'EV',
           keyword: 'ev charging station',
         );
+        final foodResults = await _fetchNearbyPlaces(
+          point,
+          category: 'Food',
+          type: 'restaurant',
+        );
+        final hotelResults = await _fetchNearbyPlaces(
+          point,
+          category: 'Hotels',
+          keyword: 'hotel',
+        );
+        final cngResults = await _fetchNearbyPlaces(
+          point,
+          category: 'CNG',
+          keyword: 'cng station',
+        );
 
-        for (final amenity in [...petrolResults, ...evResults]) {
+        for (final amenity in [
+          ...petrolResults,
+          ...evResults,
+          ...foodResults,
+          ...hotelResults,
+          ...cngResults,
+        ]) {
           final existing = amenityMap[amenity.id];
           if (existing == null ||
               amenity.routePointIndex < existing.routePointIndex) {
@@ -624,6 +645,23 @@ class _TripMapScreenState extends State<TripMapScreen> {
 
   double _toRadians(double degrees) => degrees * 3.141592653589793 / 180;
 
+  double _markerHueForCategory(String category) {
+    switch (category) {
+      case 'Petrol':
+        return BitmapDescriptor.hueOrange;
+      case 'EV':
+        return BitmapDescriptor.hueAzure;
+      case 'Food':
+        return BitmapDescriptor.hueRose;
+      case 'Hotels':
+        return BitmapDescriptor.hueViolet;
+      case 'CNG':
+        return BitmapDescriptor.hueCyan;
+      default:
+        return BitmapDescriptor.hueRed;
+    }
+  }
+
   List<RouteAmenity> get _filteredAmenities {
     if (_selectedCategory == 'All') {
       return _upcomingAmenities;
@@ -646,9 +684,7 @@ class _TripMapScreenState extends State<TripMapScreen> {
             snippet: '${amenity.category} • ${amenity.distanceLabel} ahead',
           ),
           icon: BitmapDescriptor.defaultMarkerWithHue(
-            amenity.category == 'Petrol'
-                ? BitmapDescriptor.hueOrange
-                : BitmapDescriptor.hueAzure,
+            _markerHueForCategory(amenity.category),
           ),
         ),
       );
@@ -1180,6 +1216,12 @@ class _TripMapScreenState extends State<TripMapScreen> {
                     else if (category == 'Hotels')
                       Icon(
                         Icons.hotel,
+                        size: 16,
+                        color: isSelected ? Colors.white : Colors.grey[600],
+                      )
+                    else if (category == 'CNG')
+                      Icon(
+                        Icons.local_gas_station,
                         size: 16,
                         color: isSelected ? Colors.white : Colors.grey[600],
                       ),

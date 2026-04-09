@@ -68,6 +68,8 @@ class RouteAmenity {
         return Icons.restaurant;
       case 'Hotels':
         return Icons.hotel;
+      case 'CNG':
+        return Icons.local_gas_station;
       default:
         return Icons.place;
     }

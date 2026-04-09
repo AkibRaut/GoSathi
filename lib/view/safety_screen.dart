@@ -52,13 +52,26 @@ class _SafetyScreenState extends State<SafetyScreen> {
       'Please check on me immediately.\n'
       'Emergency contacts saved in app: $savedContacts',
     );
-    final whatsappUri = Uri.parse(
-      'https://wa.me/$_sosWhatsAppNumber?text=$message',
-    );
+    final launchOptions = <Uri>[
+      Uri.parse('whatsapp://send?phone=$_sosWhatsAppNumber&text=$message'),
+      Uri.parse('https://wa.me/$_sosWhatsAppNumber?text=$message'),
+      Uri.parse(
+        'https://api.whatsapp.com/send?phone=$_sosWhatsAppNumber&text=$message',
+      ),
+    ];
 
-    if (await canLaunchUrl(whatsappUri)) {
-      await launchUrl(whatsappUri, mode: LaunchMode.externalApplication);
-      return;
+    for (final uri in launchOptions) {
+      try {
+        final launched = await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
+        if (launched) {
+          return;
+        }
+      } catch (_) {
+        // Try the next WhatsApp URL fallback.
+      }
     }
 
     Get.snackbar(

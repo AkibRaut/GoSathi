@@ -294,10 +294,19 @@ class CitySelectionScreen extends GetView<CityController> {
                               const SizedBox(height: 10),
 
                               // Start Trip Button
-                              _buildGradientButton(
-                                onPressed: controller.startTrip,
-                                icon: Icons.play_arrow_rounded,
-                                label: 'Start Trip',
+                              Obx(
+                                () => _buildGradientButton(
+                                  onPressed: controller.isStartingTrip.value
+                                      ? null
+                                      : controller.startTrip,
+                                  icon: controller.isStartingTrip.value
+                                      ? Icons.hourglass_top_rounded
+                                      : Icons.play_arrow_rounded,
+                                  label: controller.isStartingTrip.value
+                                      ? 'Starting Trip...'
+                                      : 'Start Trip',
+                                  isLoading: controller.isStartingTrip.value,
+                                ),
                               ),
                             ],
                           ),
@@ -470,9 +479,10 @@ class CitySelectionScreen extends GetView<CityController> {
   }
 
   Widget _buildGradientButton({
-    required VoidCallback onPressed,
+    required VoidCallback? onPressed,
     required IconData icon,
     required String label,
+    bool isLoading = false,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -492,6 +502,7 @@ class CitySelectionScreen extends GetView<CityController> {
         color: Colors.transparent,
         child: InkWell(
           onTap: () {
+            if (onPressed == null) return;
             HapticFeedback.mediumImpact();
             onPressed();
           },
@@ -502,7 +513,17 @@ class CitySelectionScreen extends GetView<CityController> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(icon, color: Colors.white, size: 24),
+                if (isLoading)
+                  const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: Colors.white,
+                    ),
+                  )
+                else
+                  Icon(icon, color: Colors.white, size: 24),
                 const SizedBox(width: 12),
                 Text(
                   label,
