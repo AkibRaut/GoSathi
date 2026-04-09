@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'package:get/get.dart';
 import 'package:go_sathi/controllers/city_controller.dart';
 import 'package:go_sathi/services/city_service.dart';
+import 'package:go_sathi/widgets/place_autocomplete.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:google_places_flutter/model/place_type.dart';
 import '../utils/app_colors.dart';
 
 class CitySelectionScreen extends GetView<CityController> {
@@ -57,7 +58,7 @@ class CitySelectionScreen extends GetView<CityController> {
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: AppColors.primary.withOpacity(0.3),
+                            color: AppColors.primary.withValues(alpha: 0.3),
                             blurRadius: 12,
                             offset: const Offset(0, 4),
                           ),
@@ -82,7 +83,7 @@ class CitySelectionScreen extends GetView<CityController> {
                             letterSpacing: -0.5,
                             shadows: [
                               Shadow(
-                                color: Colors.black.withOpacity(0.05),
+                                color: Colors.black.withValues(alpha: 0.05),
                                 blurRadius: 8,
                                 offset: const Offset(0, 2),
                               ),
@@ -109,22 +110,22 @@ class CitySelectionScreen extends GetView<CityController> {
                 Container(
                   width: double.infinity,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.95),
+                    color: Colors.white.withValues(alpha: 0.95),
                     borderRadius: BorderRadius.circular(32),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.08),
+                        color: Colors.black.withValues(alpha: 0.08),
                         blurRadius: 30,
                         offset: const Offset(0, 15),
                       ),
                       BoxShadow(
-                        color: AppColors.primary.withOpacity(0.1),
+                        color: AppColors.primary.withValues(alpha: 0.1),
                         blurRadius: 20,
                         offset: const Offset(0, 8),
                       ),
                     ],
                     border: Border.all(
-                      color: Colors.white.withOpacity(0.5),
+                      color: Colors.white.withValues(alpha: 0.5),
                       width: 1.5,
                     ),
                   ),
@@ -147,9 +148,11 @@ class CitySelectionScreen extends GetView<CityController> {
                                     decoration: BoxDecoration(
                                       gradient: LinearGradient(
                                         colors: [
-                                          AppColors.primary.withOpacity(0.1),
-                                          AppColors.primaryLight.withOpacity(
-                                            0.05,
+                                          AppColors.primary.withValues(
+                                            alpha: 0.1,
+                                          ),
+                                          AppColors.primaryLight.withValues(
+                                            alpha: 0.05,
                                           ),
                                         ],
                                       ),
@@ -192,6 +195,52 @@ class CitySelectionScreen extends GetView<CityController> {
                                 hint: 'e.g., Pune',
                                 icon: Icons.trip_origin,
                                 isStart: true,
+                              ),
+                              const SizedBox(height: 10),
+                              Obx(
+                                () => Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: OutlinedButton.icon(
+                                    onPressed:
+                                        controller.isFetchingCurrentStart.value
+                                        ? null
+                                        : controller.useCurrentLocationAsStart,
+                                    icon:
+                                        controller.isFetchingCurrentStart.value
+                                        ? const SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : const Icon(Icons.my_location_rounded),
+                                    label: Text(
+                                      controller.isFetchingCurrentStart.value
+                                          ? 'Getting current location...'
+                                          : 'Use my current location',
+                                      style: GoogleFonts.inter(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: AppColors.primary,
+                                      side: BorderSide(
+                                        color: AppColors.primary.withValues(
+                                          alpha: 0.2,
+                                        ),
+                                      ),
+                                      backgroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                        vertical: 10,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
                               const SizedBox(height: 16),
 
@@ -296,8 +345,8 @@ class CitySelectionScreen extends GetView<CityController> {
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                       colors: [
-                        AppColors.primary.withOpacity(0.05),
-                        AppColors.primaryLight.withOpacity(0.02),
+                        AppColors.primary.withValues(alpha: 0.05),
+                        AppColors.primaryLight.withValues(alpha: 0.02),
                       ],
                     ),
                     borderRadius: BorderRadius.circular(24),
@@ -341,7 +390,6 @@ class CitySelectionScreen extends GetView<CityController> {
     );
   }
 
-  // Autocomplete field using flutter_typeahead and Google Places API
   Widget _buildPlaceAutocompleteField({
     required String label,
     required String hint,
@@ -360,65 +408,62 @@ class CitySelectionScreen extends GetView<CityController> {
           ),
         ),
         const SizedBox(height: 8),
-        TypeAheadField<Map<String, String>>(
-          builder: (context, controller, focusNode) {
-            return TextFormField(
-              controller: controller,
-              focusNode: focusNode,
-              decoration: InputDecoration(
-                hintText: hint,
-                prefixIcon: Container(
-                  margin: const EdgeInsets.all(12),
-                  child: Icon(icon, color: AppColors.primary, size: 20),
-                ),
-                filled: true,
-                fillColor: AppColors.inputFill,
-                isDense: true,
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: AppColors.primary, width: 2),
-                ),
-                errorBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: Colors.red, width: 1.5),
-                ),
-              ),
-              onChanged: (value) {
-                if (isStart) {
-                  this.controller.setStartCity(value);
-                } else {
-                  this.controller.setDestinationCity(value);
-                }
-              },
-            );
+        PlaceAutocompleteField(
+          controller: isStart
+              ? controller.startTextController
+              : controller.destinationTextController,
+          hint: hint,
+          icon: icon,
+          placeType: PlaceType.cities,
+          validator: (value) {
+            if (value == null || value.trim().isEmpty) {
+              return 'Please select ${label.toLowerCase()}';
+            }
+            final selectedLatLng = isStart
+                ? controller.startLatLng.value
+                : controller.destinationLatLng.value;
+            if (selectedLatLng == null) {
+              return 'Choose from Google suggestions';
+            }
+            return null;
           },
-          onSelected: (value) {
-            final placeId = value['placeId']!;
-            final description = value['description']!;
+          onChanged: (value) {
             if (isStart) {
-              controller.selectStartPlace(placeId, description);
+              controller.setStartCity(value);
             } else {
-              controller.selectDestinationPlace(placeId, description);
+              controller.setDestinationCity(value);
             }
           },
-
-          suggestionsCallback: (pattern) async {
-            return await controller.searchPlaces(pattern);
+          onItemClick: (prediction) {
+            final description = prediction.description ?? '';
+            if (isStart) {
+              controller.setStartCity(description);
+            } else {
+              controller.setDestinationCity(description);
+            }
           },
-          itemBuilder: (context, Map<String, String> suggestion) {
-            return ListTile(
-              leading: Icon(Icons.location_city, color: AppColors.primary),
-              title: Text(suggestion['description'] ?? ''),
-              subtitle: Text(suggestion['placeId'] ?? ''),
-            );
-          },
+          onPlaceDetails: (prediction) {
+            final lat = double.tryParse(prediction.lat ?? '');
+            final lng = double.tryParse(prediction.lng ?? '');
+            final description = prediction.description ?? '';
+            if (lat == null || lng == null || description.isEmpty) {
+              return;
+            }
 
-          hideOnError: true,
-          debounceDuration: const Duration(milliseconds: 300),
+            if (isStart) {
+              controller.setStartPlaceFromAutocomplete(
+                description: description,
+                latitude: lat,
+                longitude: lng,
+              );
+            } else {
+              controller.setDestinationPlaceFromAutocomplete(
+                description: description,
+                latitude: lat,
+                longitude: lng,
+              );
+            }
+          },
         ),
       ],
     );
@@ -437,7 +482,7 @@ class CitySelectionScreen extends GetView<CityController> {
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withOpacity(0.4),
+            color: AppColors.primary.withValues(alpha: 0.4),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -477,7 +522,7 @@ class CitySelectionScreen extends GetView<CityController> {
   }
 
   Widget _buildRoadDecoration() {
-    return Container(
+    return SizedBox(
       height: 4,
       width: double.infinity,
       child: Row(
@@ -490,8 +535,8 @@ class CitySelectionScreen extends GetView<CityController> {
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
-                    AppColors.primary.withOpacity(0.3),
-                    AppColors.primaryLight.withOpacity(0.1),
+                    AppColors.primary.withValues(alpha: 0.3),
+                    AppColors.primaryLight.withValues(alpha: 0.1),
                   ],
                 ),
                 borderRadius: BorderRadius.circular(2),

@@ -25,6 +25,7 @@ class CityController extends GetxController {
 
   final startAddress = ''.obs;
   final destinationAddress = ''.obs;
+  final isFetchingCurrentStart = false.obs;
 
   // Search places (returns list of predictions)
   Future<List<Map<String, String>>> searchPlaces(String input) async {
@@ -63,12 +64,36 @@ class CityController extends GetxController {
     startCity.value = value;
     startTextController.text = value;
     startLatLng.value = null;
+    startAddress.value = value;
   }
 
   void setDestinationCity(String value) {
     destinationCity.value = value;
     destinationTextController.text = value;
     destinationLatLng.value = null;
+    destinationAddress.value = value;
+  }
+
+  void setStartPlaceFromAutocomplete({
+    required String description,
+    required double latitude,
+    required double longitude,
+  }) {
+    startCity.value = description;
+    startTextController.text = description;
+    startAddress.value = description;
+    startLatLng.value = LatLng(latitude, longitude);
+  }
+
+  void setDestinationPlaceFromAutocomplete({
+    required String description,
+    required double latitude,
+    required double longitude,
+  }) {
+    destinationCity.value = description;
+    destinationTextController.text = description;
+    destinationAddress.value = description;
+    destinationLatLng.value = LatLng(latitude, longitude);
   }
 
   void swapCities() {
@@ -113,19 +138,88 @@ class CityController extends GetxController {
     }
   }
 
+  Future<void> useCurrentLocationAsStart() async {
+    try {
+      isFetchingCurrentStart.value = true;
+
+      var serviceEnabled = await _location.serviceEnabled();
+      if (!serviceEnabled) {
+        serviceEnabled = await _location.requestService();
+        if (!serviceEnabled) {
+          Get.snackbar(
+            'Location disabled',
+            'Please enable location service to use current location',
+          );
+          return;
+        }
+      }
+
+      var permissionGranted = await _location.hasPermission();
+      if (permissionGranted == PermissionStatus.denied) {
+        permissionGranted = await _location.requestPermission();
+      }
+
+      if (permissionGranted != PermissionStatus.granted &&
+          permissionGranted != PermissionStatus.grantedLimited) {
+        Get.snackbar(
+          'Location permission',
+          'Please allow location permission to set the starting point',
+        );
+        return;
+      }
+
+      await _getCurrentLocation();
+      if (_currentLocation == null) {
+        Get.snackbar(
+          'Location unavailable',
+          'Could not detect your current location right now',
+        );
+        return;
+      }
+
+      startCity.value = 'My current location';
+      startTextController.text = 'My current location';
+      startAddress.value = 'My current location';
+      startLatLng.value = _currentLocation;
+
+      Get.snackbar(
+        'Starting point updated',
+        'Current location set as starting point',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.green,
+        colorText: Colors.white,
+      );
+    } catch (e) {
+      debugPrint('Error setting current location as start: $e');
+      Get.snackbar(
+        'Location error',
+        'Unable to set current location as starting point',
+      );
+    } finally {
+      isFetchingCurrentStart.value = false;
+    }
+  }
+
   void startTrip() async {
     if (formKey.currentState!.validate()) {
-      // if (startLatLng.value == null || destinationLatLng.value == null) {
-      //   Get.snackbar('Error', 'Please select valid places from suggestions');
-      //   return;
-      // }
+      if (startLatLng.value == null || destinationLatLng.value == null) {
+        Get.snackbar(
+          'Route incomplete',
+          'Please select both start and destination from suggestions',
+        );
+        return;
+      }
       await _getCurrentLocation();
       Get.to(
         () => TripHomeScreen(
-          startLatLng: _currentLocation ?? LatLng(18.52028, 73.85667),
-          destinationLatLng: LatLng(19.07611, 72.87750),
-          startAddress: "Pune, Maharashtra, India",
-          destinationAddress: "Mumbai, Maharashtra, India",
+          startLatLng:
+              startLatLng.value ??
+              _currentLocation ??
+              LatLng(18.52028, 73.85667),
+          destinationLatLng:
+              destinationLatLng.value ?? LatLng(19.07611, 72.87750),
+          startAddress: startAddress.value,
+          destinationAddress: destinationAddress.value,
         ),
       );
     }
