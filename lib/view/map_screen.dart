@@ -4,6 +4,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:location/location.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:http/http.dart' as http;
@@ -39,16 +40,21 @@ class TripMapScreen extends StatefulWidget {
 
 class _TripMapScreenState extends State<TripMapScreen> {
   static const double _routeCorridorKm = 1.2;
-  late GoogleMapController _mapController;
+  static const double _stopsRefreshDistanceKm = 3.0;
+  GoogleMapController? _mapController;
   final Set<Marker> _coreMarkers = {};
   final Set<Polyline> _polylines = {};
   final Location _location = Location();
+  StreamSubscription<LocationData>? _locationSubscription;
   LatLng? _currentLocation;
+  LatLng? _lastStopsRefreshLocation;
   List<LatLng> _routePoints = [];
   List<RouteAmenity> _upcomingAmenities = [];
   bool _isLoadingRoute = true;
+  bool _isMapReady = false;
   bool _isLoadingAmenities = false;
   bool _isNavigationActive = false;
+  bool _isOfflineRouteMode = false;
   bool _showUpcomingStopsPanel = false;
   bool _isUpcomingStopsCollapsed = false;
   LatLng? _activeDestinationLatLng;
@@ -136,14 +142,14 @@ class _TripMapScreenState extends State<TripMapScreen> {
           locationData.latitude!,
           locationData.longitude!,
         );
+        _syncCurrentLocationMarker();
       });
-      _addCurrentLocationMarker();
     } catch (e) {
       debugPrint('Error getting current location: $e');
     }
   }
 
-  void _addCurrentLocationMarker() {
+  void _syncCurrentLocationMarker() {
     if (_currentLocation != null) {
       _coreMarkers.removeWhere(
         (marker) => marker.markerId == const MarkerId('current'),
@@ -157,6 +163,63 @@ class _TripMapScreenState extends State<TripMapScreen> {
         ),
       );
     }
+  }
+
+  Future<void> _startLiveNavigationTracking() async {
+    await _location.changeSettings(
+      accuracy: LocationAccuracy.high,
+      interval: 5000,
+      distanceFilter: 25,
+    );
+    await _locationSubscription?.cancel();
+    _lastStopsRefreshLocation = _currentLocation;
+    _locationSubscription = _location.onLocationChanged.listen(
+      _handleLiveLocationUpdate,
+      onError: (error) => debugPrint('Location stream error: $error'),
+    );
+  }
+
+  Future<void> _handleLiveLocationUpdate(LocationData locationData) async {
+    final lat = locationData.latitude;
+    final lng = locationData.longitude;
+    if (lat == null || lng == null || !mounted) {
+      return;
+    }
+
+    final latestLocation = LatLng(lat, lng);
+    setState(() {
+      _currentLocation = latestLocation;
+      _syncCurrentLocationMarker();
+    });
+
+    if (_isNavigationActive && _isMapReady) {
+      _mapController?.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: latestLocation,
+            zoom: 17,
+            bearing: locationData.heading ?? 0,
+            tilt: 45,
+          ),
+        ),
+      );
+    }
+
+    final lastRefresh = _lastStopsRefreshLocation;
+    if (lastRefresh == null) {
+      _lastStopsRefreshLocation = latestLocation;
+      return;
+    }
+
+    if (!_isNavigationActive ||
+        _isLoadingAmenities ||
+        _distanceBetweenKm(lastRefresh, latestLocation) <
+            _stopsRefreshDistanceKm) {
+      return;
+    }
+
+    _lastStopsRefreshLocation = latestLocation;
+    await _fetchUpcomingAmenities();
   }
 
   void _notifyRouteDataChanged() {
@@ -192,6 +255,7 @@ class _TripMapScreenState extends State<TripMapScreen> {
 
     setState(() {
       _isLoadingRoute = true;
+      _isOfflineRouteMode = false;
       _activeDestinationLatLng = destinationLatLng;
       _activeDestinationTitle = destinationTitle;
       _activeDestinationSnippet =
@@ -246,22 +310,90 @@ class _TripMapScreenState extends State<TripMapScreen> {
             await _fetchUpcomingAmenities();
           }
         } else {
-          setState(() => _isLoadingRoute = false);
-          Get.snackbar('Error', 'No route found');
+          _showOfflineRouteFallback(
+            destinationLatLng: destinationLatLng,
+            destinationTitle: destinationTitle,
+            destinationSnippet: destinationSnippet,
+          );
+          Get.snackbar('Offline route', 'Showing an approximate route');
         }
       } else {
-        setState(() => _isLoadingRoute = false);
-        Get.snackbar('Error', 'Failed to fetch route');
+        _showOfflineRouteFallback(
+          destinationLatLng: destinationLatLng,
+          destinationTitle: destinationTitle,
+          destinationSnippet: destinationSnippet,
+        );
+        Get.snackbar('Offline route', 'Showing an approximate route');
       }
     } catch (e) {
-      setState(() => _isLoadingRoute = false);
       debugPrint('Route error: $e');
-      Get.snackbar('Error', 'Could not calculate route');
+      _showOfflineRouteFallback(
+        destinationLatLng: destinationLatLng,
+        destinationTitle: destinationTitle,
+        destinationSnippet: destinationSnippet,
+      );
+      Get.snackbar(
+        'Offline route',
+        'No internet detected. Showing an approximate route.',
+      );
     }
   }
 
+  void _showOfflineRouteFallback({
+    required LatLng destinationLatLng,
+    required String destinationTitle,
+    String? destinationSnippet,
+  }) {
+    final originLatLng = _currentLocation ?? widget.startLatLng;
+    final offlinePoints = [originLatLng, destinationLatLng];
+    final distanceKm = _distanceBetweenKm(originLatLng, destinationLatLng);
+    final estimatedMinutes = max(1, (distanceKm / 50 * 60).round());
+
+    setState(() {
+      _isLoadingRoute = false;
+      _isOfflineRouteMode = true;
+      _activeDestinationLatLng = destinationLatLng;
+      _activeDestinationTitle = destinationTitle;
+      _activeDestinationSnippet =
+          destinationSnippet ?? _activeDestinationSnippet;
+      _routePoints = offlinePoints;
+      _distance = '${distanceKm.toStringAsFixed(1)} km';
+      _duration = _formatEstimatedDuration(estimatedMinutes);
+      _upcomingAmenities = [];
+      _polylines.removeWhere(
+        (polyline) => polyline.polylineId == const PolylineId('route'),
+      );
+      _polylines.add(
+        Polyline(
+          polylineId: const PolylineId('route'),
+          color: Colors.grey,
+          points: offlinePoints,
+          width: 5,
+        ),
+      );
+      _syncDestinationMarker();
+    });
+
+    _notifyRouteDataChanged();
+    _fitBounds(offlinePoints);
+  }
+
+  String _formatEstimatedDuration(int minutes) {
+    if (minutes < 60) {
+      return '$minutes min';
+    }
+
+    final hours = minutes ~/ 60;
+    final remainingMinutes = minutes % 60;
+    if (remainingMinutes == 0) {
+      return '${hours}h';
+    }
+
+    return '${hours}h ${remainingMinutes}m';
+  }
+
   void _fitBounds(List<LatLng> points) {
-    if (points.isEmpty) return;
+    if (points.isEmpty || !_isMapReady) return;
     double minLat = points.first.latitude;
     double maxLat = points.first.latitude;
     double minLng = points.first.longitude;
@@ -276,11 +408,15 @@ class _TripMapScreenState extends State<TripMapScreen> {
       southwest: LatLng(minLat, minLng),
       northeast: LatLng(maxLat, maxLng),
     );
-    _mapController.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+    _mapController?.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
   }
 
   void _onMapCreated(GoogleMapController controller) {
     _mapController = controller;
+    _isMapReady = true;
+    if (_routePoints.isNotEmpty) {
+      _fitBounds(_routePoints);
+    }
   }
 
   void _toggleRoutesOverlay() {
@@ -308,6 +444,8 @@ class _TripMapScreenState extends State<TripMapScreen> {
       _showUpcomingStopsPanel = true;
       _isUpcomingStopsCollapsed = false;
     });
+
+    await _startLiveNavigationTracking();
 
     if (_upcomingAmenities.isEmpty) {
       await _fetchUpcomingAmenities();
@@ -802,6 +940,8 @@ class _TripMapScreenState extends State<TripMapScreen> {
                     ),
                   ),
 
+                if (_isOfflineRouteMode) _buildOfflineRouteBanner(),
+
                 // Back button
                 Positioned(
                   top: 16,
@@ -1144,6 +1284,44 @@ class _TripMapScreenState extends State<TripMapScreen> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildOfflineRouteBanner() {
+    return Positioned(
+      top: 92,
+      left: 16,
+      right: 16,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1F2937),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.12),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.cloud_off, color: Colors.white, size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Offline map mode: approximate route shown. Live stops will update when internet is back.',
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1584,7 +1762,8 @@ class _TripMapScreenState extends State<TripMapScreen> {
 
   @override
   void dispose() {
-    _mapController.dispose();
+    _locationSubscription?.cancel();
+    _mapController?.dispose();
     super.dispose();
   }
 }

@@ -12,7 +12,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   // Snooze categories state
-  Map<String, bool> _snoozeCategories = {
+  final Map<String, bool> _snoozeCategories = {
     'Petrol Pumps': true,
     'EV Chargers': false,
     'Restaurants': false,
@@ -64,6 +64,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   // Snooze Categories Section
                   _buildSnoozeCategoriesSection(),
+
+                  const SizedBox(height: 32),
+
+                  _buildFeaturesSection(),
 
                   const SizedBox(height: 32),
 
@@ -135,7 +139,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.05),
+                color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 8,
                 offset: const Offset(0, 2),
               ),
@@ -162,8 +166,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
-                            color: (categoryIcon['color'] as Color).withOpacity(
-                              0.1,
+                            color: (categoryIcon['color'] as Color).withValues(
+                              alpha: 0.1,
                             ),
                             borderRadius: BorderRadius.circular(8),
                           ),
@@ -199,7 +203,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               duration: const Duration(seconds: 2),
                             );
                           },
-                          activeColor: AppColors.primary,
+                          activeThumbColor: AppColors.primary,
                           inactiveThumbColor: Colors.grey[300],
                         ),
                       ],
@@ -218,6 +222,135 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildFeaturesSection() {
+    final features = [
+      {
+        'title': 'Route-side stops',
+        'subtitle': 'Petrol, EV, Food, Hotels, and CNG along your route.',
+        'icon': Icons.route,
+        'color': AppColors.primary,
+      },
+      {
+        'title': 'Offline route fallback',
+        'subtitle': 'Shows an approximate route when internet is unavailable.',
+        'icon': Icons.cloud_off,
+        'color': Colors.teal,
+      },
+      {
+        'title': 'SOS safety alert',
+        'subtitle': 'Open WhatsApp with an emergency message from Safety.',
+        'icon': Icons.sos,
+        'color': Colors.red,
+      },
+      {
+        'title': 'Trip expenses',
+        'subtitle': 'Add fuel, toll, food, and other trip costs.',
+        'icon': Icons.receipt_long,
+        'color': Colors.orange,
+      },
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'APP FEATURES',
+          style: GoogleFonts.inter(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[600],
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            children: List.generate(features.length, (index) {
+              final feature = features[index];
+              return Column(
+                children: [
+                  _buildFeatureTile(
+                    title: feature['title'] as String,
+                    subtitle: feature['subtitle'] as String,
+                    icon: feature['icon'] as IconData,
+                    color: feature['color'] as Color,
+                  ),
+                  if (index < features.length - 1)
+                    Divider(
+                      height: 1,
+                      color: Colors.grey[200],
+                      indent: 56,
+                      endIndent: 16,
+                    ),
+                ],
+              );
+            }),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFeatureTile({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -242,7 +375,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             borderRadius: BorderRadius.circular(16),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.05),
+                color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 8,
                 offset: const Offset(0, 2),
               ),
