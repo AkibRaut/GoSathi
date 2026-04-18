@@ -7,7 +7,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:ui' as ui;
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 import 'package:go_sathi/models/route_data.dart';
 import 'package:go_sathi/view/routes_screen.dart';
 import '../utils/app_colors.dart';
@@ -64,6 +66,32 @@ class _TripMapScreenState extends State<TripMapScreen> {
   String _duration = '';
   String _selectedCategory = 'All';
   bool _showRoutesOverlay = false;
+  final Map<String, BitmapDescriptor> _categoryIcons = {};
+
+  // Feature 2 & 6: Speed tracking
+  double _currentSpeedKmh = 60.0;
+
+  // Feature 3: Category snooze
+  final Map<String, double> _snoozedUntilKm = {};
+  double _totalDistanceTraveledKm = 0.0;
+  LatLng? _lastDistanceLocation;
+
+  // Feature 8: Trip summary
+  DateTime? _tripStartTime;
+  final Set<String> _visitedStopIds = {};
+
+  // Feature 11: Stop expenses
+  final List<_StopExpense> _stopExpenses = [];
+
+  // Feature 12: Fuel estimator
+  double _vehicleMileageKmpl = 15.0;
+  double _fuelPricePerLitre = 100.0;
+
+  // Feature 13: Auto-SOS
+  Timer? _sosCheckTimer;
+  DateTime? _lastMovementTime;
+  LatLng? _lastMovementLocation;
+  bool _sosPending = false;
 
   static const String _apiKey = "AIzaSyCnfQ-TTa0kZzAPvcgc9qyorD34aIxaZhk";
   final List<String> _categories = [
@@ -75,6 +103,538 @@ class _TripMapScreenState extends State<TripMapScreen> {
     "CNG",
   ];
 
+  Color _colorForCategory(String category) {
+    switch (category) {
+      case 'Petrol':
+        return const Color(0xFFFF6B00);
+      case 'EV':
+        return const Color(0xFF0066FF);
+      case 'Food':
+        return const Color(0xFFE91E63);
+      case 'Hotels':
+        return const Color(0xFF9C27B0);
+      case 'CNG':
+        return const Color(0xFF00BCD4);
+      default:
+        return const Color(0xFFE53935);
+    }
+  }
+
+  IconData _iconDataForCategory(String category) {
+    switch (category) {
+      case 'Petrol':
+        return Icons.local_gas_station;
+      case 'EV':
+        return Icons.ev_station;
+      case 'Food':
+        return Icons.restaurant;
+      case 'Hotels':
+        return Icons.hotel;
+      case 'CNG':
+        return Icons.local_gas_station;
+      default:
+        return Icons.place;
+    }
+  }
+
+  Future<BitmapDescriptor> _buildMarkerIcon(String category) async {
+    const double size = 96;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, size, size));
+    final color = _colorForCategory(category);
+
+    // Shadow
+    final shadowPaint = Paint()
+      ..color = Colors.black26
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+    canvas.drawCircle(
+      const Offset(size / 2, size / 2 + 2),
+      size / 2 - 8,
+      shadowPaint,
+    );
+
+    // Filled circle
+    canvas.drawCircle(
+      const Offset(size / 2, size / 2),
+      size / 2 - 10,
+      Paint()..color = color,
+    );
+
+    // White border
+    canvas.drawCircle(
+      const Offset(size / 2, size / 2),
+      size / 2 - 10,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3,
+    );
+
+    // Icon glyph
+    final iconData = _iconDataForCategory(category);
+    final tp = TextPainter(textDirection: TextDirection.ltr)
+      ..text = TextSpan(
+        text: String.fromCharCode(iconData.codePoint),
+        style: TextStyle(
+          fontSize: 38,
+          fontFamily: iconData.fontFamily ?? 'MaterialIcons',
+          color: Colors.white,
+        ),
+      )
+      ..layout();
+    tp.paint(canvas, Offset((size - tp.width) / 2, (size - tp.height) / 2));
+
+    final picture = recorder.endRecording();
+    final img = await picture.toImage(size.toInt(), size.toInt());
+    final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.bytes(bytes!.buffer.asUint8List(), width: 56);
+  }
+
+  Future<void> _initCategoryIcons() async {
+    for (final cat in ['Petrol', 'EV', 'Food', 'Hotels', 'CNG']) {
+      _categoryIcons[cat] = await _buildMarkerIcon(cat);
+    }
+    if (mounted) setState(() {});
+  }
+
+  // ── Feature 4: Share current location ──────────────────────────────────────
+  Future<void> _shareLocation() async {
+    final loc = _currentLocation;
+    if (loc == null) {
+      Get.snackbar('Location unavailable', 'Waiting for GPS fix');
+      return;
+    }
+    final link = 'https://maps.google.com/?q=${loc.latitude},${loc.longitude}';
+    final uri = Uri.parse(
+      'https://wa.me/?text=${Uri.encodeComponent('My current location: $link')}',
+    );
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      Get.snackbar(
+        'Share',
+        'Maps link: $link',
+        duration: const Duration(seconds: 4),
+      );
+    }
+  }
+
+  // ── Feature 2: Stop ETA (minutes from current speed) ───────────────────────
+  int _computeStopEtaMin(RouteAmenity amenity) {
+    final speed = _currentSpeedKmh > 5 ? _currentSpeedKmh : 60.0;
+    return (amenity.distanceAheadKm / speed * 60).round().clamp(1, 999);
+  }
+
+  // ── Feature 12: Fuel cost estimator ────────────────────────────────────────
+  double _estimatedFuelCost() {
+    final distKm =
+        double.tryParse(_distance.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0;
+    if (distKm == 0 || _vehicleMileageKmpl == 0) return 0.0;
+    return (distKm / _vehicleMileageKmpl) * _fuelPricePerLitre;
+  }
+
+  void _showFuelSettingsDialog() {
+    final mileageCtrl = TextEditingController(
+      text: _vehicleMileageKmpl.toStringAsFixed(0),
+    );
+    final priceCtrl = TextEditingController(
+      text: _fuelPricePerLitre.toStringAsFixed(0),
+    );
+    Get.dialog<void>(
+      AlertDialog(
+        title: Text(
+          'Fuel Settings',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: mileageCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Mileage (km/L)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: priceCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Fuel price (₹/L)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: Get.back, child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            onPressed: () {
+              setState(() {
+                _vehicleMileageKmpl =
+                    double.tryParse(mileageCtrl.text) ?? _vehicleMileageKmpl;
+                _fuelPricePerLitre =
+                    double.tryParse(priceCtrl.text) ?? _fuelPricePerLitre;
+              });
+              Get.back();
+            },
+            child: const Text('Save', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Feature 11: Log stop expense ────────────────────────────────────────────
+  Future<void> _logStopExpense(RouteAmenity amenity) async {
+    final amountCtrl = TextEditingController();
+    final defaultCat = amenity.category == 'Food'
+        ? 'Food'
+        : amenity.category == 'Hotels'
+        ? 'Hotel'
+        : 'Fuel';
+    final result = await Get.dialog<double>(
+      AlertDialog(
+        title: Text(
+          'Log Expense – ${amenity.name}',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14),
+        ),
+        content: TextField(
+          controller: amountCtrl,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(
+            labelText: '$defaultCat amount (₹)',
+            prefixText: '₹ ',
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: Get.back, child: const Text('Skip')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            onPressed: () {
+              final amt = double.tryParse(amountCtrl.text.trim());
+              if (amt != null && amt > 0) Get.back(result: amt);
+            },
+            child: const Text('Save', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (result != null) {
+      setState(() {
+        _stopExpenses.add(
+          _StopExpense(
+            stopName: amenity.name,
+            category: defaultCat,
+            amount: result,
+            createdAt: DateTime.now(),
+          ),
+        );
+      });
+      Get.snackbar(
+        'Expense saved',
+        '₹${result.toStringAsFixed(0)} for ${amenity.name}',
+        backgroundColor: Colors.green,
+        colorText: Colors.white,
+        snackPosition: SnackPosition.BOTTOM,
+      );
+    }
+  }
+
+  // ── Feature 3: Snooze category ──────────────────────────────────────────────
+  void _snoozeCategory(String category) {
+    final options = [5.0, 10.0, 20.0, 50.0];
+    Get.dialog<void>(
+      AlertDialog(
+        title: Text(
+          'Snooze $category stops',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+        content: Text(
+          'Hide $category stops for the next …',
+          style: GoogleFonts.inter(),
+        ),
+        actions: [
+          TextButton(onPressed: Get.back, child: const Text('Cancel')),
+          ...options.map(
+            (km) => ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+              ),
+              onPressed: () {
+                setState(() {
+                  _snoozedUntilKm[category] = _totalDistanceTraveledKm + km;
+                });
+                Get.back();
+                Get.snackbar(
+                  'Snoozed',
+                  '$category stops hidden for ${km.toInt()} km',
+                  snackPosition: SnackPosition.BOTTOM,
+                );
+              },
+              child: Text(
+                '${km.toInt()} km',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _isCategorySnoozed(String category) {
+    final until = _snoozedUntilKm[category];
+    return until != null && _totalDistanceTraveledKm < until;
+  }
+
+  // ── Feature 13: Auto-SOS timer ─────────────────────────────────────────────
+  void _startSosCheckTimer() {
+    _sosCheckTimer?.cancel();
+    _sosCheckTimer = Timer.periodic(const Duration(minutes: 2), (_) {
+      if (!_isNavigationActive || _sosPending) return;
+      final last = _lastMovementTime;
+      if (last == null) return;
+      final stationaryFor = DateTime.now().difference(last);
+      if (stationaryFor.inMinutes >= 10) {
+        _showSosWarningDialog();
+      }
+    });
+  }
+
+  void _showSosWarningDialog() {
+    if (!mounted) return;
+    setState(() => _sosPending = true);
+    int countdown = 30;
+    Timer? countdownTimer;
+    Get.dialog<void>(
+      StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          countdownTimer ??= Timer.periodic(const Duration(seconds: 1), (t) {
+            if (!mounted) {
+              t.cancel();
+              return;
+            }
+            setDialogState(() => countdown--);
+            if (countdown <= 0) {
+              t.cancel();
+              Get.back();
+              _sendAutoSOS();
+            }
+          });
+          return AlertDialog(
+            backgroundColor: Colors.red[50],
+            title: Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: Colors.red),
+                const SizedBox(width: 8),
+                Text(
+                  'Are you okay?',
+                  style: GoogleFonts.poppins(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.red,
+                  ),
+                ),
+              ],
+            ),
+            content: Text(
+              'You haven\'t moved in 5 minutes.\n'
+              'SOS will be sent in $countdown seconds.',
+              style: GoogleFonts.inter(),
+            ),
+            actions: [
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                onPressed: () {
+                  countdownTimer?.cancel();
+                  setState(() => _sosPending = false);
+                  Get.back();
+                  _lastMovementTime = DateTime.now();
+                },
+                child: const Text(
+                  "I'm okay",
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+      barrierDismissible: false,
+    ).then((_) {
+      countdownTimer?.cancel();
+      if (mounted) setState(() => _sosPending = false);
+    });
+  }
+
+  Future<void> _sendAutoSOS() async {
+    final loc = _currentLocation;
+    final locationText = loc != null
+        ? 'My location: https://maps.google.com/?q=${loc.latitude},${loc.longitude}'
+        : 'Location unavailable';
+    final message = Uri.encodeComponent(
+      'AUTO SOS from GoSaathi!\nI have not moved for 5+ minutes.\n$locationText',
+    );
+    final uris = [
+      Uri.parse('whatsapp://send?phone=917743876435&text=$message'),
+      Uri.parse('https://wa.me/917743876435?text=$message'),
+    ];
+    for (final uri in uris) {
+      try {
+        if (await launchUrl(uri, mode: LaunchMode.externalApplication)) return;
+      } catch (_) {}
+    }
+  }
+
+  // ── Feature 8: Trip summary on end ─────────────────────────────────────────
+  void _endTrip() {
+    // Build summary data
+    final elapsed = _tripStartTime != null
+        ? DateTime.now().difference(_tripStartTime!)
+        : Duration.zero;
+    final hh = elapsed.inHours;
+    final mm = elapsed.inMinutes % 60;
+    final elapsedStr = hh > 0 ? '${hh}h ${mm}m' : '${mm}m';
+    final stopCount = _visitedStopIds.length;
+    final fuelCost = _estimatedFuelCost();
+    final expenseTotal = _stopExpenses.fold<double>(0, (s, e) => s + e.amount);
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.flag_rounded, color: Colors.red),
+            const SizedBox(width: 8),
+            Text(
+              'Trip Summary',
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _summaryRow(
+              Icons.timeline,
+              'Distance',
+              _distance.isNotEmpty ? _distance : '—',
+            ),
+            _summaryRow(Icons.access_time, 'Duration', elapsedStr),
+            _summaryRow(Icons.place, 'Stops visited', '$stopCount'),
+            _summaryRow(
+              Icons.local_gas_station,
+              'Est. fuel cost',
+              fuelCost > 0 ? '₹${fuelCost.toStringAsFixed(0)}' : '—',
+            ),
+            if (expenseTotal > 0)
+              _summaryRow(
+                Icons.receipt_long,
+                'Logged expenses',
+                '₹${expenseTotal.toStringAsFixed(0)}',
+              ),
+            if (_stopExpenses.isNotEmpty) ...[
+              const Divider(height: 16),
+              ..._stopExpenses.map(
+                (e) => _summaryRow(
+                  Icons.circle,
+                  e.stopName,
+                  '₹${e.amount.toStringAsFixed(0)}',
+                  small: true,
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              Get.back();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('End Trip'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryRow(
+    IconData icon,
+    String label,
+    String value, {
+    bool small = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: small ? 14 : 18, color: AppColors.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: small ? 11 : 13,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: GoogleFonts.poppins(
+              fontSize: small ? 11 : 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _callAmenity(RouteAmenity amenity) async {
+    try {
+      final url =
+          'https://maps.googleapis.com/maps/api/place/details/json'
+          '?place_id=${amenity.id}'
+          '&fields=formatted_phone_number'
+          '&key=$_apiKey';
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        final phone =
+            (data['result'] as Map<String, dynamic>?)?['formatted_phone_number']
+                as String?;
+        if (phone != null) {
+          final telUri = Uri(scheme: 'tel', path: phone);
+          if (await canLaunchUrl(telUri)) {
+            await launchUrl(telUri);
+            return;
+          }
+        }
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    Get.snackbar(
+      'Phone not available',
+      'Could not find a phone number for ${amenity.name}',
+      snackPosition: SnackPosition.BOTTOM,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -82,6 +642,7 @@ class _TripMapScreenState extends State<TripMapScreen> {
     _activeDestinationTitle = 'Destination';
     _activeDestinationSnippet = widget.destinationAddress;
     _initializeMap();
+    _initCategoryIcons();
     _getCurrentLocation();
     _fetchRouteDetails(destinationLatLng: widget.destinationLatLng);
   }
@@ -187,8 +748,27 @@ class _TripMapScreenState extends State<TripMapScreen> {
     }
 
     final latestLocation = LatLng(lat, lng);
+    final speedMs = locationData.speed ?? 0.0;
+    final speedKmh = speedMs * 3.6;
+
+    // Update distance traveled for snooze tracking
+    final prevDist = _lastDistanceLocation;
+    if (prevDist != null) {
+      _totalDistanceTraveledKm += _distanceBetweenKm(prevDist, latestLocation);
+    }
+    _lastDistanceLocation = latestLocation;
+
+    // Feature 13: movement detection
+    final lastMoveLoc = _lastMovementLocation;
+    if (lastMoveLoc == null ||
+        _distanceBetweenKm(lastMoveLoc, latestLocation) > 0.05) {
+      _lastMovementTime = DateTime.now();
+      _lastMovementLocation = latestLocation;
+    }
+
     setState(() {
       _currentLocation = latestLocation;
+      _currentSpeedKmh = speedKmh > 0 ? speedKmh : _currentSpeedKmh;
       _syncCurrentLocationMarker();
     });
 
@@ -443,8 +1023,12 @@ class _TripMapScreenState extends State<TripMapScreen> {
       _isNavigationActive = true;
       _showUpcomingStopsPanel = true;
       _isUpcomingStopsCollapsed = false;
+      _tripStartTime ??= DateTime.now();
+      _lastMovementTime = DateTime.now();
+      _lastMovementLocation = _currentLocation;
     });
 
+    _startSosCheckTimer();
     await _startLiveNavigationTracking();
 
     if (_upcomingAmenities.isEmpty) {
@@ -531,6 +1115,7 @@ class _TripMapScreenState extends State<TripMapScreen> {
     setState(() {
       _isNavigationActive = true;
       _showUpcomingStopsPanel = false;
+      _visitedStopIds.add(amenity.id);
     });
 
     await _fetchRouteDetails(
@@ -801,13 +1386,11 @@ class _TripMapScreenState extends State<TripMapScreen> {
   }
 
   List<RouteAmenity> get _filteredAmenities {
-    if (_selectedCategory == 'All') {
-      return _upcomingAmenities;
-    }
-
-    return _upcomingAmenities
-        .where((amenity) => amenity.category == _selectedCategory)
-        .toList();
+    return _upcomingAmenities.where((amenity) {
+      if (_isCategorySnoozed(amenity.category)) return false;
+      if (_selectedCategory == 'All') return true;
+      return amenity.category == _selectedCategory;
+    }).toList();
   }
 
   Set<Marker> get _visibleMarkers {
@@ -821,9 +1404,11 @@ class _TripMapScreenState extends State<TripMapScreen> {
             title: amenity.name,
             snippet: '${amenity.category} • ${amenity.distanceLabel} ahead',
           ),
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            _markerHueForCategory(amenity.category),
-          ),
+          icon:
+              _categoryIcons[amenity.category] ??
+              BitmapDescriptor.defaultMarkerWithHue(
+                _markerHueForCategory(amenity.category),
+              ),
         ),
       );
     }
@@ -941,6 +1526,42 @@ class _TripMapScreenState extends State<TripMapScreen> {
                   ),
 
                 if (_isOfflineRouteMode) _buildOfflineRouteBanner(),
+
+                // Feature 6: Speed HUD
+                if (_isNavigationActive)
+                  Positioned(
+                    top: 16,
+                    right: 64,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.speed,
+                            size: 14,
+                            color: Colors.white70,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${_currentSpeedKmh.toStringAsFixed(0)} km/h',
+                            style: GoogleFonts.poppins(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
 
                 // Back button
                 Positioned(
@@ -1243,26 +1864,33 @@ class _TripMapScreenState extends State<TripMapScreen> {
                 ),
               ),
               const Spacer(),
-              Container(
-                height: 24,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.location_on, size: 14, color: Colors.red),
-                    const SizedBox(width: 4),
-                    const Text(
-                      'End',
-                      style: TextStyle(
-                        fontSize: 12,
+              GestureDetector(
+                onTap: _endTrip,
+                child: Container(
+                  height: 24,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.stop_circle_outlined,
+                        size: 14,
                         color: Colors.red,
-                        fontWeight: FontWeight.w500,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 4),
+                      const Text(
+                        'End',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.red,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -1280,6 +1908,29 @@ class _TripMapScreenState extends State<TripMapScreen> {
               _buildStatWidget(
                 _duration.isNotEmpty ? _duration : '0 min',
                 _isNavigationActive ? 'ETA' : 'Trip',
+              ),
+              const SizedBox(width: 16),
+              GestureDetector(
+                onTap: _showFuelSettingsDialog,
+                child: _buildStatWidget(
+                  _estimatedFuelCost() > 0
+                      ? '₹${_estimatedFuelCost().toStringAsFixed(0)}'
+                      : '—',
+                  'Fuel est.',
+                ),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: _shareLocation,
+                child: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: Colors.white12,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.share, size: 16, color: Colors.white),
+                ),
               ),
             ],
           ),
@@ -1333,7 +1984,7 @@ class _TripMapScreenState extends State<TripMapScreen> {
         Text(
           value,
           style: GoogleFonts.poppins(
-            fontSize: 18,
+            fontSize: 15,
             fontWeight: FontWeight.bold,
             color: Colors.white,
           ),
@@ -1353,66 +2004,75 @@ class _TripMapScreenState extends State<TripMapScreen> {
       child: Row(
         children: _categories.map((category) {
           final isSelected = _selectedCategory == category;
+          final isSnoozed = category != 'All' && _isCategorySnoozed(category);
           return Padding(
             padding: const EdgeInsets.only(right: 10),
             child: GestureDetector(
-              onTap: () {
-                setState(() => _selectedCategory = category);
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: isSelected ? AppColors.primary : Colors.white,
-                  border: Border.all(
-                    color: isSelected ? AppColors.primary : Colors.grey[300]!,
+              onTap: () => setState(() => _selectedCategory = category),
+              onLongPress: category != 'All'
+                  ? () => _snoozeCategory(category)
+                  : null,
+              child: Opacity(
+                opacity: isSnoozed ? 0.45 : 1.0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
                   ),
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: Row(
-                  children: [
-                    if (category == 'Petrol')
-                      Icon(
-                        Icons.local_gas_station,
-                        size: 16,
-                        color: isSelected ? Colors.white : Colors.orange,
-                      )
-                    else if (category == 'EV')
-                      Icon(
-                        Icons.ev_station,
-                        size: 16,
-                        color: isSelected ? Colors.white : Colors.grey[600],
-                      )
-                    else if (category == 'Food')
-                      Icon(
-                        Icons.restaurant,
-                        size: 16,
-                        color: isSelected ? Colors.white : Colors.grey[600],
-                      )
-                    else if (category == 'Hotels')
-                      Icon(
-                        Icons.hotel,
-                        size: 16,
-                        color: isSelected ? Colors.white : Colors.grey[600],
-                      )
-                    else if (category == 'CNG')
-                      Icon(
-                        Icons.local_gas_station,
-                        size: 16,
-                        color: isSelected ? Colors.white : Colors.grey[600],
-                      ),
-                    if (category != 'All') const SizedBox(width: 6),
-                    Text(
-                      category,
-                      style: GoogleFonts.inter(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: isSelected ? Colors.white : Colors.black87,
-                      ),
+                  decoration: BoxDecoration(
+                    color: isSelected ? AppColors.primary : Colors.white,
+                    border: Border.all(
+                      color: isSnoozed
+                          ? Colors.grey[400]!
+                          : isSelected
+                          ? AppColors.primary
+                          : Colors.grey[300]!,
                     ),
-                  ],
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Row(
+                    children: [
+                      if (category == 'Petrol')
+                        Icon(
+                          Icons.local_gas_station,
+                          size: 16,
+                          color: isSelected ? Colors.white : Colors.orange,
+                        )
+                      else if (category == 'EV')
+                        Icon(
+                          Icons.ev_station,
+                          size: 16,
+                          color: isSelected ? Colors.white : Colors.grey[600],
+                        )
+                      else if (category == 'Food')
+                        Icon(
+                          Icons.restaurant,
+                          size: 16,
+                          color: isSelected ? Colors.white : Colors.grey[600],
+                        )
+                      else if (category == 'Hotels')
+                        Icon(
+                          Icons.hotel,
+                          size: 16,
+                          color: isSelected ? Colors.white : Colors.grey[600],
+                        )
+                      else if (category == 'CNG')
+                        Icon(
+                          Icons.local_gas_station,
+                          size: 16,
+                          color: isSelected ? Colors.white : Colors.grey[600],
+                        ),
+                      if (category != 'All') const SizedBox(width: 6),
+                      Text(
+                        isSnoozed ? '$category 💤' : category,
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: isSelected ? Colors.white : Colors.black87,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1647,7 +2307,9 @@ class _TripMapScreenState extends State<TripMapScreen> {
   }
 
   Widget _buildAmenityTile(RouteAmenity amenity) {
-    final isPetrol = amenity.category == 'Petrol';
+    final color = _colorForCategory(amenity.category);
+    final isCallable =
+        amenity.category == 'Food' || amenity.category == 'Hotels';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -1666,14 +2328,10 @@ class _TripMapScreenState extends State<TripMapScreen> {
                   width: 42,
                   height: 42,
                   decoration: BoxDecoration(
-                    color: (isPetrol ? Colors.orange : Colors.lightBlue)
-                        .withValues(alpha: 0.14),
+                    color: color.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(
-                    isPetrol ? Icons.local_gas_station : Icons.ev_station,
-                    color: isPetrol ? Colors.orange : Colors.lightBlue,
-                  ),
+                  child: Icon(amenity.icon, color: color),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -1717,42 +2375,119 @@ class _TripMapScreenState extends State<TripMapScreen> {
                     ),
                     if (amenity.rating != null)
                       Text(
-                        '${amenity.rating!.toStringAsFixed(1)} star',
+                        '${amenity.rating!.toStringAsFixed(1)} ★',
                         style: GoogleFonts.inter(
                           fontSize: 11,
                           color: AppColors.textSecondary,
                         ),
                       ),
+                    // Feature 2: ETA
+                    Text(
+                      '~${_computeStopEtaMin(amenity)} min away',
+                      style: GoogleFonts.inter(
+                        fontSize: 10,
+                        color: Colors.green[700],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                   ],
                 ),
               ],
             ),
             const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerRight,
-              child: ElevatedButton.icon(
-                onPressed: () => _navigateToAmenity(amenity),
-                icon: const Icon(Icons.navigation, size: 16),
-                label: Text(
-                  'Navigate',
-                  style: GoogleFonts.inter(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // Feature 11: Log expense
+                GestureDetector(
+                  onTap: () => _logStopExpense(amenity),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: Colors.orange.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.receipt_long,
+                          size: 14,
+                          color: Colors.orange,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Log ₹',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isCallable) ...[
+                      OutlinedButton.icon(
+                        onPressed: () => _callAmenity(amenity),
+                        icon: const Icon(Icons.phone, size: 16),
+                        label: Text(
+                          'Call',
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: color,
+                          side: BorderSide(color: color),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 10,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    ElevatedButton.icon(
+                      onPressed: () => _navigateToAmenity(amenity),
+                      icon: const Icon(Icons.navigation, size: 16),
+                      label: Text(
+                        'Navigate',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
+              ],
             ),
           ],
         ),
@@ -1764,8 +2499,22 @@ class _TripMapScreenState extends State<TripMapScreen> {
   void dispose() {
     _locationSubscription?.cancel();
     _mapController?.dispose();
+    _sosCheckTimer?.cancel();
     super.dispose();
   }
+}
+
+class _StopExpense {
+  final String stopName;
+  final String category;
+  final double amount;
+  final DateTime createdAt;
+  const _StopExpense({
+    required this.stopName,
+    required this.category,
+    required this.amount,
+    required this.createdAt,
+  });
 }
 
 class _RouteMatch {

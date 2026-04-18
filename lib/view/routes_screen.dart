@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 import 'package:go_sathi/models/route_data.dart';
 import '../utils/app_colors.dart';
 
@@ -102,6 +105,38 @@ class _RoutesScreenState extends State<RoutesScreen> {
       backgroundColor: AppColors.primary,
       colorText: Colors.white,
       duration: const Duration(seconds: 2),
+    );
+  }
+
+  static const String _apiKey = "AIzaSyCnfQ-TTa0kZzAPvcgc9qyorD34aIxaZhk";
+
+  Future<void> _callPlace(RouteAmenity amenity) async {
+    try {
+      final url =
+          'https://maps.googleapis.com/maps/api/place/details/json'
+          '?place_id=${amenity.id}'
+          '&fields=formatted_phone_number'
+          '&key=$_apiKey';
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        final phone =
+            (data['result'] as Map<String, dynamic>?)?['formatted_phone_number']
+                as String?;
+        if (phone != null) {
+          final telUri = Uri(scheme: 'tel', path: phone);
+          if (await canLaunchUrl(telUri)) {
+            await launchUrl(telUri);
+            return;
+          }
+        }
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    Get.snackbar(
+      'Phone not available',
+      'Could not find a phone number for ${amenity.name}',
+      snackPosition: SnackPosition.BOTTOM,
     );
   }
 
@@ -512,6 +547,27 @@ class _RoutesScreenState extends State<RoutesScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
+                if (amenity.category == 'Food' ||
+                    amenity.category == 'Hotels') ...[
+                  ElevatedButton.icon(
+                    onPressed: () => _callPlace(amenity),
+                    icon: const Icon(Icons.phone, size: 14),
+                    label: Text('Call', style: GoogleFonts.inter(fontSize: 11)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: color.withValues(alpha: 0.18),
+                      foregroundColor: color,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 ElevatedButton.icon(
                   onPressed: () => _markDone(amenity),
                   icon: const Icon(Icons.check, size: 14),
